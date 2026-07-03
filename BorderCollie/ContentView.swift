@@ -6,54 +6,41 @@
 //
 
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var selection: SidebarSection? = .codex
 
     var body: some View {
         NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
+            List(selection: $selection) {
+                Label("Codex", systemImage: "terminal")
+                    .tag(SidebarSection.codex)
+                Label("Cursor", systemImage: "cursorarrow.rays")
+                    .tag(SidebarSection.cursor)
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-            .toolbar {
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
+            .listStyle(.sidebar)
+            .navigationTitle("BorderCollie")
         } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+            switch selection ?? .codex {
+            case .codex:
+                CodexUsageView()
+            case .cursor:
+                CursorUsageView()
             }
         }
     }
 }
 
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+private enum SidebarSection: String, Identifiable {
+    case codex
+    case cursor
+
+    var id: String { rawValue }
+}
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+            .previewDisplayName("BorderCollie")
+    }
 }

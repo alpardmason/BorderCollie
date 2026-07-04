@@ -1,24 +1,26 @@
 # BorderCollie
 
 BorderCollie is a native macOS SwiftUI app for monitoring coding-agent usage
-limits from one place. It currently tracks Codex and Cursor, showing remaining
-usage, reset timing, and a static last-updated time in a compact desktop UI.
+limits from one local desktop surface. It currently tracks Codex and Cursor,
+showing remaining usage in the main window and a compact menu-bar popup.
 
-The app is intentionally local-first: credentials are read from provider-owned
-local auth state, used only by provider-specific service/client layers, and are
-not passed into SwiftUI views.
+The app is local-first by design. Provider credentials are read from
+provider-owned local auth state, used only by provider-specific service/client
+layers, and never passed into SwiftUI views.
 
-## Current Features
+## Features
 
-- Native macOS sidebar with Codex and Cursor usage trackers.
-- Automatic query when a tracker page opens.
-- Fixed 30-second auto refresh.
-- Manual toolbar refresh.
-- Usage remaining bars, not usage consumed.
+- Native macOS app with a sidebar for Codex and Cursor trackers.
+- Menu-bar item with compact usage rows for all tracked agents.
+- Automatic query when a tracker page or menu-bar popup opens.
+- Fixed 30-second auto refresh across tracker pages and the menu-bar popup.
+- Manual toolbar refresh in tracker pages.
+- Icon-only manual refresh in the menu-bar popup.
+- Usage remaining display, not usage consumed.
 - Static updated timestamp that changes only after a new query result.
-- Preview-safe tracker screens with no live credential or network access.
-- Unit coverage for credential parsing, response normalization, display
-  formatting, and API error mapping.
+- Preview-safe SwiftUI surfaces that do not read credentials or call networks.
+- Swift Testing coverage for credential parsing, API normalization, display
+  formatting, compact menu-bar summaries, and failure mapping.
 
 ## Supported Trackers
 
@@ -35,8 +37,12 @@ Credential lookup order:
 1. macOS Keychain generic password named `Codex Auth`.
 2. `~/.codex/auth.json`.
 
-The Codex tracker displays normalized 5-hour and weekly quota windows when the
-provider returns them.
+The main window displays normalized 5-hour and weekly quota windows. The
+menu-bar compact format is:
+
+```text
+5h: 80% | 7d: 90%
+```
 
 ### Cursor
 
@@ -51,20 +57,54 @@ Credential lookup:
 1. `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`.
 2. `ItemTable` key `cursorAuth/accessToken`.
 
-The Cursor tracker displays current monthly `Auto + Composer` and `API`
-remaining usage.
+The main window displays current monthly `Auto + Composer` and `API` remaining
+usage. The menu-bar compact format is:
+
+```text
+Auto: 95% | API: 60%
+```
+
+## Architecture
+
+BorderCollie keeps provider-specific credential and network work outside the
+SwiftUI layer.
+
+```text
+SwiftUI views
+  UsageTrackerView
+  AgentUsageMenuBarView
+
+State and refresh orchestration
+  UsageTrackerViewModel
+  MenuBarUsageViewModel
+  UsageQuotaQuery
+
+Provider services
+  CodexQuotaService
+  CursorQuotaService
+
+Credential and API clients
+  CodexCredentialResolver
+  CodexUsageClient
+  CursorCredentialResolver
+  CursorUsageClient
+```
+
+Provider responses are normalized into `SubscriptionQuota`. `QuotaTier`
+preserves provider-reported used percentage in `utilization`; display code
+converts it to remaining percentage with `100 - utilization`.
 
 ## Privacy And Security
 
-BorderCollie reads local provider auth state so it can query the same usage
-data visible in the provider apps or dashboards. The app does not hardcode
-tokens, store copied tokens, or render tokens in the UI.
+BorderCollie reads local provider auth state so it can query the same usage data
+visible in provider apps or dashboards. It does not hardcode tokens, store
+copied tokens, or render tokens in UI.
 
-Security boundaries worth preserving:
+Security boundaries to preserve:
 
 - Credential discovery stays outside SwiftUI views.
 - Bearer tokens are used only by provider-specific clients.
-- Network and subprocess calls use explicit timeouts.
+- Network, subprocess, and full-refresh work use explicit timeouts.
 - Provider error bodies are truncated before display.
 - Xcode previews use sample data only.
 
@@ -76,7 +116,7 @@ access, Codex auth-file access, and network calls.
 ## Requirements
 
 - macOS 26.5 or newer target SDK/runtime.
-- Xcode 26.6 or compatible version for the current project format.
+- Xcode 26.6 or a compatible version for the current project format.
 - A signed-in Codex CLI or Cursor install for live tracker data.
 
 ## Build And Verify
@@ -101,10 +141,13 @@ are prepared for the app UI to launch.
 
 ```text
 BorderCollie/
-  BorderCollieApp.swift          App entry point
-  ContentView.swift              Root navigation
-  UsageTrackerView.swift         Shared tracker UI
-  UsageTrackerViewModel.swift    Refresh lifecycle and timeout handling
+  BorderCollieApp.swift          App entry point and scenes
+  ContentView.swift              Root sidebar/detail navigation
+  UsageTrackerView.swift         Shared tracker page UI
+  UsageTrackerViewModel.swift    Page refresh lifecycle
+  AgentUsageMenuBarView.swift    Menu-bar popup UI
+  MenuBarUsageViewModel.swift    Menu-bar row refresh orchestration
+  UsageQuotaQuery.swift          Shared full-query timeout wrapper
   UsageTrackingService.swift     Shared service and HTTP protocols
   Codex*.swift                   Codex credential, API, display, and view code
   Cursor*.swift                  Cursor credential, API, display, and view code
@@ -112,7 +155,17 @@ BorderCollieTests/
   BorderCollieTests.swift        Swift Testing coverage
 docs/
   tracker_design.md              Architecture guide for adding trackers
+  menubar-item-design.me         Menu-bar item interaction and UI design
 ```
+
+## Documentation
+
+- [Tracker design](docs/tracker_design.md): architecture, data model, provider
+  integration, refresh behavior, and extension guidance.
+- [Menu-bar item design](docs/menubar-item-design.me): menu-bar scene,
+  compact row behavior, visual layout, and implementation contract.
+- [Codex usage query report](docs/cc-switch-codex-usage-query-report.md):
+  reference notes for the Codex usage API lineage.
 
 ## Development Notes
 
@@ -122,7 +175,7 @@ docs/
 - Keep auto refresh fixed at 30 seconds unless the product standard changes.
 - Keep previews deterministic and offline.
 - Add tests for new credential parsing, response normalization, display labels,
-  and error mapping when adding another tracker.
+  menu-bar compact labels, and error mapping when adding another tracker.
 
 Read `docs/tracker_design.md` before adding future trackers.
 

@@ -46,14 +46,11 @@ struct UsageTrackerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            header
-
-            Divider()
-
             quotaContent
         }
         .padding(24)
         .frame(minWidth: 520, minHeight: 320, alignment: .topLeading)
+        .navigationTitle(title)
         .task {
             await runAutoRefreshLoop()
         }
@@ -61,16 +58,6 @@ struct UsageTrackerView: View {
             ToolbarItem(placement: .primaryAction) {
                 refreshToolbarButton
             }
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(title)
-                .font(.title2)
-                .fontWeight(.semibold)
-
-            Spacer()
         }
     }
 

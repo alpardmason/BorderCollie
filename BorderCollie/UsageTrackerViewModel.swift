@@ -27,7 +27,7 @@ final class UsageTrackerViewModel: ObservableObject {
                 refreshTask = nil
             }
 
-            let result = await Self.queryQuotaWithTimeout(service: service)
+            let result = await UsageQuotaQuery.query(service: service)
             guard !Task.isCancelled else {
                 return
             }
@@ -45,32 +45,4 @@ final class UsageTrackerViewModel: ObservableObject {
             }
         }
     }
-
-    private nonisolated static func queryQuotaWithTimeout(
-        service: UsageTrackingService
-    ) async -> Result<SubscriptionQuota, Error> {
-        await withTaskGroup(of: Result<SubscriptionQuota, Error>.self) { group in
-            group.addTask {
-                .success(await service.getSubscriptionQuota())
-            }
-
-            group.addTask {
-                do {
-                    try await Task.sleep(for: .seconds(20))
-                } catch {
-                    return .failure(error)
-                }
-
-                return .failure(UsageTrackerRefreshError.timedOut)
-            }
-
-            let result = await group.next() ?? .failure(UsageTrackerRefreshError.timedOut)
-            group.cancelAll()
-            return result
-        }
-    }
-}
-
-private enum UsageTrackerRefreshError: Error {
-    case timedOut
 }

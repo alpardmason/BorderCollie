@@ -6,12 +6,17 @@ Codex and Cursor usage. Future trackers, such as Claude Code, should preserve
 the same user experience and normalized quota model while isolating each agent's
 credential and API details.
 
+For detailed menu-bar interaction and visual rules, read
+`docs/menubar-item-design.me`.
+
 ## Goals
 
 - Show usage remaining for each supported coding agent.
 - Query automatically when a tracker page opens.
+- Query automatically when the menu-bar usage popup opens.
 - Refresh automatically on a fixed cadence without user configuration.
 - Keep a manual toolbar refresh action for recovery and debugging.
+- Keep a manual icon-only menu-bar refresh action for quick recovery.
 - Normalize provider-specific quota APIs into one UI-friendly model.
 - Keep credentials local and never expose tokens in SwiftUI views.
 - Make adding a new tracker predictable, testable, and low-risk.
@@ -21,7 +26,8 @@ credential and API details.
 The current Codex screen defines the product standard for future trackers:
 
 - The sidebar contains one tab per tracker.
-- The detail page title is the tracker name, for example `Codex`.
+- The detail window header title is the tracker name, for example `Codex`.
+- Do not repeat the tracker name as a large heading in the detail body.
 - Auth implementation details are not shown during normal operation.
 - The main section title is `Usage remaining`.
 - Each usage window is shown as:
@@ -35,6 +41,20 @@ The current Codex screen defines the product standard for future trackers:
 - Auto refresh runs every 30 seconds.
 - Xcode previews must not run live credential or network queries.
 
+The menu-bar companion follows the same usage semantics in a compact format:
+
+- The menu-bar item is a SwiftUI `MenuBarExtra` with `.window` style.
+- The regular Dock/window app remains the primary app mode.
+- The popup queries on open and refreshes every 30 seconds while visible.
+- A compact row is shown for each tracked agent, ordered `Codex`, then
+  `Cursor`.
+- Codex compact format: `5h: 80% | 7d: 90%`.
+- Cursor compact format: `Auto: 95% | API: 60%`.
+- Compact percentages are usage remaining, rounded to whole percentages.
+- Missing compact tiers show `--`.
+- Detailed menu-bar UI and row-state rules live in
+  `docs/menubar-item-design.me`.
+
 The current Codex UI is implemented primarily in:
 
 - `BorderCollie/ContentView.swift`
@@ -43,7 +63,7 @@ The current Codex UI is implemented primarily in:
 
 ## Architecture Overview
 
-The current tracker implementation has five layers:
+The current tracker implementation has six layers:
 
 1. **Root navigation**
    - `ContentView` owns sidebar selection.
@@ -60,11 +80,19 @@ The current tracker implementation has five layers:
    - It prevents overlapping refreshes with `guard !isLoading`.
    - It wraps the whole refresh operation in a 20-second timeout.
 
-4. **Quota service**
+4. **Menu-bar companion**
+   - `AgentUsageMenuBarView` renders the compact popup.
+   - `MenuBarUsageViewModel` refreshes all configured agents concurrently,
+     prevents overlapping refreshes, and maps each provider result into an
+     independent row state.
+   - `UsageQuotaQuery` provides the shared 20-second timeout wrapper used by
+     both tracker pages and menu-bar rows.
+
+5. **Quota service**
    - Provider services coordinate credential lookup and quota querying.
    - It converts credential states into normalized `SubscriptionQuota` errors.
 
-5. **Provider-specific resolver/client**
+6. **Provider-specific resolver/client**
    - `CodexCredentialResolver` reads Codex credentials from Keychain first and
      then `~/.codex/auth.json`.
    - `CodexUsageClient` queries the Codex quota endpoint and maps the response
@@ -170,6 +198,8 @@ Known Codex windows:
 | `18000` | `five_hour` | `5h` |
 | `604800` | `seven_day` | `Weekly` |
 
+The compact menu-bar labels are `5h` and `7d`.
+
 Unknown windows should be normalized using the current generic naming rule:
 
 - `<n>_hour` for windows under 24 hours.
@@ -232,6 +262,8 @@ Known Cursor windows:
 | `cursor_auto_composer` | `Auto + Composer` |
 | `cursor_api` | `API` |
 
+The compact menu-bar labels are `Auto` and `API`.
+
 ### Refresh Behavior
 
 Refresh behavior is split between the view and view model:
@@ -242,6 +274,9 @@ Refresh behavior is split between the view and view model:
 - `UsageTrackerViewModel` ignores refresh requests while `isLoading` is true.
 - `UsageTrackerViewModel` times out the full refresh operation after 20 seconds.
 - The toolbar refresh button remains available for manual recovery.
+- `MenuBarUsageViewModel` refreshes all tracked agents concurrently, ignores
+  overlapping refresh requests, and keeps previous row data visible while a
+  refresh is in flight.
 
 This combination prevents the old "query runs forever" failure mode while still
 making the feature automatic for normal use.
@@ -263,6 +298,14 @@ Reuse the current tracker detail pattern:
 - Static `Updated at <time>` timestamp.
 - Preview with mock quota data and auto refresh disabled.
 
+For the menu bar, reuse the compact companion pattern:
+
+- `MenuBarExtra("BorderCollie", systemImage: "gauge")`.
+- `.menuBarExtraStyle(.window)` for room to show row states.
+- One compact row per tracker.
+- Provider-specific compact formatter functions near each provider's display
+  helpers.
+
 ### Display Semantics
 
 Reuse these rules:
@@ -274,6 +317,7 @@ Reuse these rules:
 - Format short-window resets as time.
 - Format weekly or longer resets as date.
 - Do not show credential details in the happy path.
+- Compact menu-bar summaries should use whole-number remaining percentages.
 
 ### View Model Behavior
 
@@ -284,6 +328,8 @@ Reuse these rules:
 - A full query should have an overall timeout.
 - Query results should update the view through a normalized quota object.
 - Preview initialization should support injecting sample quota data.
+- Menu-bar refresh should keep previous row text visible while a new refresh is
+  in progress.
 
 ### Test Structure
 
@@ -294,6 +340,7 @@ Reuse the current testing style:
 - Unit tests for display conversion from used percentage to remaining
   percentage.
 - Tests for reset formatting.
+- Tests for compact menu-bar summary strings and row-state mapping.
 - Capturing fake HTTP clients instead of real network calls.
 - `xcodebuild build-for-testing` for non-launching verification.
 
@@ -428,6 +475,7 @@ needs a different user experience.
    - Add a sidebar item.
    - Add a detail route.
    - Keep one stable selection enum case per tracker.
+   - Add a compact menu-bar descriptor and formatter.
 
 7. **Add previews**
    - Add a filled preview with representative quota data.
@@ -438,6 +486,7 @@ needs a different user experience.
    - Successful response normalization test.
    - Unauthorized/expired mapping test.
    - Display conversion test.
+   - Menu-bar compact formatter and row-state tests.
    - Timeout or no-overlap behavior test when practical.
 
 9. **Verify**

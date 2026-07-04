@@ -70,6 +70,73 @@ struct BorderCollieTests {
         #expect(limits.map { $0.resetText(timeZone: TimeZone(secondsFromGMT: 0)!) } == ["Jul 30", "Jul 30"])
     }
 
+    @Test func codexCompactSummaryShowsRemainingUsage() {
+        let quota = SubscriptionQuota(
+            tool: "codex",
+            credentialStatus: .valid,
+            credentialMessage: nil,
+            success: true,
+            tiers: [
+                QuotaTier(name: "five_hour", utilization: 20, resetsAt: nil),
+                QuotaTier(name: "seven_day", utilization: 10, resetsAt: nil),
+            ],
+            extraUsage: nil,
+            error: nil,
+            queriedAt: nil
+        )
+
+        #expect(CodexUsageLimitDisplay.compactSummary(from: quota) == "5h: 80% | 7d: 90%")
+    }
+
+    @Test func cursorCompactSummaryShowsRemainingUsage() {
+        let quota = SubscriptionQuota(
+            tool: "cursor",
+            credentialStatus: .valid,
+            credentialMessage: nil,
+            success: true,
+            tiers: [
+                QuotaTier(name: "cursor_api", utilization: 40, resetsAt: nil),
+                QuotaTier(name: "cursor_auto_composer", utilization: 5, resetsAt: nil),
+            ],
+            extraUsage: nil,
+            error: nil,
+            queriedAt: nil
+        )
+
+        #expect(CursorUsageLimitDisplay.compactSummary(from: quota) == "Auto: 95% | API: 60%")
+    }
+
+    @Test func compactSummaryHandlesMissingClampedAndRoundedTiers() {
+        let codexQuota = SubscriptionQuota(
+            tool: "codex",
+            credentialStatus: .valid,
+            credentialMessage: nil,
+            success: true,
+            tiers: [
+                QuotaTier(name: "five_hour", utilization: 20.4, resetsAt: nil),
+            ],
+            extraUsage: nil,
+            error: nil,
+            queriedAt: nil
+        )
+        let cursorQuota = SubscriptionQuota(
+            tool: "cursor",
+            credentialStatus: .valid,
+            credentialMessage: nil,
+            success: true,
+            tiers: [
+                QuotaTier(name: "cursor_auto_composer", utilization: -2, resetsAt: nil),
+                QuotaTier(name: "cursor_api", utilization: 125, resetsAt: nil),
+            ],
+            extraUsage: nil,
+            error: nil,
+            queriedAt: nil
+        )
+
+        #expect(CodexUsageLimitDisplay.compactSummary(from: codexQuota) == "5h: 80% | 7d: --")
+        #expect(CursorUsageLimitDisplay.compactSummary(from: cursorQuota) == "Auto: 100% | API: 0%")
+    }
+
     @Test func credentialParserRejectsNonChatGPTOAuthMode() {
         let credentials = CodexCredentialResolver.parseCodexCredentialsJSON(
             """
@@ -280,6 +347,132 @@ struct BorderCollieTests {
 
         #expect(quota == .notFound(tool: "cursor"))
     }
+
+    @MainActor
+    @Test func menuBarViewModelRefreshesAgentsConcurrentlyInFixedOrder() async {
+        let probe = RefreshConcurrencyProbe()
+        let codexService = StubUsageTrackingService(
+            toolID: "codex",
+            quota: SubscriptionQuota(
+                tool: "codex",
+                credentialStatus: .valid,
+                credentialMessage: nil,
+                success: true,
+                tiers: [
+                    QuotaTier(name: "five_hour", utilization: 20, resetsAt: nil),
+                    QuotaTier(name: "seven_day", utilization: 10, resetsAt: nil),
+                ],
+                extraUsage: nil,
+                error: nil,
+                queriedAt: nil
+            ),
+            onQuery: {
+                await probe.enter()
+                try? await Task.sleep(for: .milliseconds(50))
+                await probe.leave()
+            }
+        )
+        let cursorService = StubUsageTrackingService(
+            toolID: "cursor",
+            quota: .notFound(tool: "cursor"),
+            onQuery: {
+                await probe.enter()
+                try? await Task.sleep(for: .milliseconds(50))
+                await probe.leave()
+            }
+        )
+        let viewModel = MenuBarUsageViewModel(
+            agents: [
+                .codex(service: codexService),
+                .cursor(service: cursorService),
+            ]
+        )
+
+        await viewModel.refresh()
+
+        #expect(await probe.maxRunningCount() == 2)
+        #expect(viewModel.rows.map(\.title) == ["Codex", "Cursor"])
+        #expect(viewModel.rows.map(\.detail) == ["5h: 80% | 7d: 90%", "Sign in required"])
+        #expect(viewModel.rows.map(\.state) == [.success, .unavailable])
+    }
+
+    @MainActor
+    @Test func menuBarViewModelPreservesRowsAndSkipsOverlappingRefresh() async {
+        let serviceState = CountingUsageServiceState(
+            quota: SubscriptionQuota(
+                tool: "codex",
+                credentialStatus: .valid,
+                credentialMessage: nil,
+                success: true,
+                tiers: [
+                    QuotaTier(name: "five_hour", utilization: 25, resetsAt: nil),
+                    QuotaTier(name: "seven_day", utilization: 15, resetsAt: nil),
+                ],
+                extraUsage: nil,
+                error: nil,
+                queriedAt: nil
+            )
+        )
+        let viewModel = MenuBarUsageViewModel(
+            agents: [
+                .codex(service: CountingUsageTrackingService(toolID: "codex", state: serviceState)),
+            ],
+            initialRows: [
+                MenuBarUsageRow(id: "codex", title: "Codex", detail: "5h: 80% | 7d: 90%", state: .success),
+            ]
+        )
+
+        let refreshTask = Task { @MainActor in
+            await viewModel.refresh()
+        }
+        while !viewModel.isRefreshing {
+            await Task.yield()
+        }
+
+        #expect(viewModel.rows.first?.detail == "5h: 80% | 7d: 90%")
+
+        await viewModel.refresh()
+        await refreshTask.value
+
+        #expect(await serviceState.callCount() == 1)
+        #expect(viewModel.rows.first?.detail == "5h: 75% | 7d: 85%")
+    }
+
+    @MainActor
+    @Test func menuBarViewModelMapsUnsuccessfulQuotaStates() async {
+        let viewModel = MenuBarUsageViewModel(
+            agents: [
+                .codex(service: StubUsageTrackingService(toolID: "missing", quota: .notFound(tool: "missing"))),
+                .codex(
+                    service: StubUsageTrackingService(
+                        toolID: "expired",
+                        quota: .error(tool: "expired", status: .expired, message: "expired")
+                    )
+                ),
+                .codex(
+                    service: StubUsageTrackingService(
+                        toolID: "parse",
+                        quota: .error(tool: "parse", status: .parseError, message: "parse")
+                    )
+                ),
+                .codex(
+                    service: StubUsageTrackingService(
+                        toolID: "valid-failure",
+                        quota: .error(tool: "valid-failure", status: .valid, message: "remote")
+                    )
+                ),
+            ]
+        )
+
+        await viewModel.refresh()
+
+        #expect(viewModel.rows.map(\.detail) == [
+            "Sign in required",
+            "Sign in again",
+            "Credential issue",
+            "Query failed",
+        ])
+    }
 }
 
 private actor CapturingHTTPClient: CodexUsageHTTPClient {
@@ -313,5 +506,65 @@ private struct StubCursorCredentialResolver: CursorCredentialResolving {
 
     func readCursorCredentials() -> CursorCredentials {
         credentials
+    }
+}
+
+private struct StubUsageTrackingService: UsageTrackingService {
+    let toolID: String
+    let quota: SubscriptionQuota
+    var onQuery: (@Sendable () async -> Void)?
+
+    func getSubscriptionQuota() async -> SubscriptionQuota {
+        if let onQuery {
+            await onQuery()
+        }
+
+        return quota
+    }
+}
+
+private actor RefreshConcurrencyProbe {
+    private var runningCount = 0
+    private var maxRunning = 0
+
+    func enter() {
+        runningCount += 1
+        maxRunning = max(maxRunning, runningCount)
+    }
+
+    func leave() {
+        runningCount -= 1
+    }
+
+    func maxRunningCount() -> Int {
+        maxRunning
+    }
+}
+
+private actor CountingUsageServiceState {
+    private let quota: SubscriptionQuota
+    private var queries = 0
+
+    init(quota: SubscriptionQuota) {
+        self.quota = quota
+    }
+
+    func query() async -> SubscriptionQuota {
+        queries += 1
+        try? await Task.sleep(for: .milliseconds(50))
+        return quota
+    }
+
+    func callCount() -> Int {
+        queries
+    }
+}
+
+private struct CountingUsageTrackingService: UsageTrackingService {
+    let toolID: String
+    let state: CountingUsageServiceState
+
+    func getSubscriptionQuota() async -> SubscriptionQuota {
+        await state.query()
     }
 }

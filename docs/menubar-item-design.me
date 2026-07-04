@@ -1,0 +1,142 @@
+# Menu-Bar Item Design
+
+This document defines the product and implementation contract for
+BorderCollie's menu-bar item. The menu-bar surface is a companion to the main
+window, not a replacement for it.
+
+## Goals
+
+- Let the user check all tracked agent usage without opening or navigating the
+  main window.
+- Preserve the app's existing usage semantics: show usage remaining, not usage
+  consumed.
+- Keep the popup compact enough for frequent use from the menu bar.
+- Reuse the same credential, API, timeout, and display-normalization paths as
+  the main tracker pages.
+- Avoid leaking auth implementation details or provider tokens into SwiftUI.
+
+## Scene Model
+
+The app remains a regular Dock/window app. `BorderCollieApp` defines the main
+`WindowGroup` and a separate SwiftUI `MenuBarExtra`:
+
+```swift
+WindowGroup {
+    ContentView()
+}
+
+MenuBarExtra("BorderCollie", systemImage: "gauge") {
+    AgentUsageMenuBarView()
+}
+.menuBarExtraStyle(.window)
+```
+
+Use `.window` style because the popup needs lightweight layout, loading states,
+and multiple rows. Do not switch to a menu-style extra unless the content is
+reduced to simple commands only.
+
+## Layout
+
+The popup uses a single compact column:
+
+- Header: `Usage remaining` with a gauge icon.
+- Header action: icon-only refresh button using `arrow.clockwise`.
+- Body: one row per tracked agent.
+
+There is no bottom toolbar and no text-labeled `Refresh` button. The refresh
+button keeps an accessibility label and help text of `Refresh`.
+
+Each row contains:
+
+- Agent name, such as `Codex` or `Cursor`.
+- Compact remaining-usage summary.
+
+Rows are ordered by product priority:
+
+1. Codex
+2. Cursor
+
+## Compact Text Contract
+
+Compact summaries are provider-specific because the quota windows differ.
+
+Codex:
+
+```text
+5h: 80% | 7d: 90%
+```
+
+Cursor:
+
+```text
+Auto: 95% | API: 60%
+```
+
+Percentages are usage remaining. Provider-reported used percentage remains in
+`QuotaTier.utilization`; compact display code converts it to remaining
+percentage, clamps it to `0...100`, and rounds to a whole percentage.
+
+Missing compact tiers render as `--`.
+
+## Refresh Behavior
+
+The menu-bar popup refreshes immediately when it appears, then every 30 seconds
+while visible.
+
+`MenuBarUsageViewModel` owns menu-bar refresh behavior:
+
+- Refresh all configured agents concurrently.
+- Keep the configured row order after concurrent completion.
+- Ignore overlapping refresh requests.
+- Preserve the previous row text while a refresh is in progress.
+- Use `UsageQuotaQuery` for the shared 20-second full-query timeout.
+
+The view disables live refresh in Xcode previews and injects sample rows.
+
+## Error States
+
+Each row handles failure independently. One provider can show usage while
+another reports an unavailable state.
+
+Normalized row messages:
+
+| Quota state | Menu-bar text |
+| --- | --- |
+| Missing credentials | `Sign in required` |
+| Expired credentials | `Sign in again` |
+| Parse error | `Credential issue` |
+| Valid credentials but failed query | `Query failed` |
+| Full-query timeout | `Timed out` |
+
+Do not show provider credential file paths, bearer tokens, raw response bodies,
+or auth implementation details in the menu-bar happy path.
+
+## Extension Contract
+
+When adding a future tracker:
+
+- Add a provider-specific compact formatter near that provider's display
+  helpers.
+- Add a `MenuBarUsageAgent` descriptor with stable `id`, `title`, service, and
+  compact formatter.
+- Add a row-order decision in `MenuBarUsageViewModel`.
+- Add tests for exact compact text, missing tiers, clamping, and error mapping.
+- Keep preview data static and local.
+
+## Test Coverage
+
+Menu-bar behavior should be covered without live network calls:
+
+- Exact Codex compact text.
+- Exact Cursor compact text.
+- Missing compact tiers.
+- Rounded and clamped percentages.
+- Concurrent refresh with stable row ordering.
+- Overlap prevention.
+- Per-row unavailable-state mapping.
+
+Use the project standard compile check for verification:
+
+```sh
+xcodebuild build-for-testing -project BorderCollie.xcodeproj -scheme BorderCollie -destination 'platform=macOS' -derivedDataPath /private/tmp/BorderCollieDerivedDataBuild CODE_SIGNING_ALLOWED=NO
+```

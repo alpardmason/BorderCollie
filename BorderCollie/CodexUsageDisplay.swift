@@ -78,6 +78,15 @@ enum CodexUsageLimitKind: String, CaseIterable, Identifiable, Sendable {
             "Weekly"
         }
     }
+
+    var compactTitle: String {
+        switch self {
+        case .fiveHour:
+            "5h"
+        case .week:
+            "7d"
+        }
+    }
 }
 
 struct CodexUsageLimitDisplay: Identifiable, Equatable, Sendable {
@@ -133,6 +142,12 @@ struct CodexUsageLimitDisplay: Identifiable, Equatable, Sendable {
         }
     }
 
+    static func compactSummary(from quota: SubscriptionQuota) -> String {
+        expectedLimits(from: quota)
+            .map { "\($0.kind.compactTitle): \(CompactUsageDisplay.percentageText(for: $0.tier))" }
+            .joined(separator: " | ")
+    }
+
     private func remainingPercentage(from usedPercentage: Double?) -> Double {
         guard let usedPercentage else {
             return 0
@@ -156,5 +171,16 @@ struct CodexUsageLimitDisplay: Identifiable, Equatable, Sendable {
         formatter.timeZone = timeZone
         formatter.setLocalizedDateFormatFromTemplate("MMM d")
         return formatter
+    }
+}
+
+enum CompactUsageDisplay {
+    static func percentageText(for tier: QuotaTier?) -> String {
+        guard let tier else {
+            return "--"
+        }
+
+        let remaining = min(max(100 - tier.utilization, 0), 100)
+        return "\(Int(remaining.rounded()))%"
     }
 }

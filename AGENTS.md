@@ -17,6 +17,11 @@
 
 - `BorderCollie/BorderCollieApp.swift`: app entry point.
 - `BorderCollie/ContentView.swift`: root sidebar/detail navigation.
+- `BorderCollie/AgentUsageMenuBarView.swift`: menu-bar usage popup UI.
+- `BorderCollie/MenuBarUsageViewModel.swift`: menu-bar refresh orchestration,
+  row state, and compact provider summaries.
+- `BorderCollie/UsageQuotaQuery.swift`: shared timeout wrapper for quota
+  queries.
 - `BorderCollie/UsageTrackerView.swift`: shared tracker UI, toolbar refresh,
   auto-refresh loop, and preview-safe rendering.
 - `BorderCollie/UsageTrackerViewModel.swift`: loading state, refresh lifecycle,
@@ -43,6 +48,8 @@
   rows.
 - `BorderCollie/CursorUsageDisplay.swift`: Cursor monthly usage row labels.
 - `docs/tracker_design.md`: design guide for adding future usage trackers.
+- `docs/menubar-item-design.me`: design contract for the menu-bar companion
+  surface.
 
 ## Common Commands
 
@@ -58,9 +65,13 @@ are prepared for the app UI to launch.
 ## Current Usage Tracker Standard
 
 - Query automatically when a tracker page opens.
+- Query automatically when the menu-bar usage popup opens.
 - Refresh automatically every 30 seconds.
 - Keep manual Refresh in the top toolbar.
+- Keep manual refresh in the menu-bar popup as an icon-only button.
 - Show `Usage remaining`, not usage consumed.
+- The menu-bar popup shows all tracked agents in compact remaining format:
+  `Codex 5h: 80% | 7d: 90%` and `Cursor Auto: 95% | API: 60%`.
 - Use native SwiftUI `ProgressView` bars.
 - Keep updated time static until the next refresh.
 - Do not show auth implementation details in the happy path.
@@ -88,7 +99,8 @@ are prepared for the app UI to launch.
 
 - Root cause: preview instantiated the live view model and auto-refresh loop.
 - Fix: inject sample quota data and pass `runsAutoRefresh: false`.
-- Prevention: every tracker preview should use local sample data only.
+- Prevention: every tracker and menu-bar preview should use local sample data
+  only.
 
 ### Symptom: `#Preview` macro fails in sandboxed command-line build
 
@@ -183,6 +195,23 @@ are prepared for the app UI to launch.
   behavior consistent while provider-specific credential and API details remain
   isolated.
 
+### Decision: add a SwiftUI `MenuBarExtra` companion
+
+- Context: usage should be visible without navigating the main window.
+- Alternatives considered: AppKit `NSStatusItem` or replacing the regular app
+  with a menu-bar-only utility.
+- Rationale: `MenuBarExtra` with `.window` style preserves the existing Dock app
+  while providing enough room for compact async usage rows.
+
+### Decision: compact menu-bar summaries reuse normalized quota data
+
+- Context: the menu-bar popup needs all tracked agents in a short format.
+- Alternatives considered: provider-specific menu calls or rendering the full
+  tracker cards in miniature.
+- Rationale: compact formatters keep provider labels short while sharing the
+  same credential, timeout, and percentage-normalization behavior as the main
+  tracker views.
+
 ### Decision: Cursor uses IDE auth plus current-period dashboard usage
 
 - Context: Cursor CLI/agent exposes auth and model commands but not the monthly
@@ -200,12 +229,17 @@ are prepared for the app UI to launch.
 Read `docs/tracker_design.md` before adding another tracker such as Claude
 Code.
 
+Read `docs/menubar-item-design.me` before changing the menu-bar companion UI or
+adding another tracker row there.
+
 When adding future trackers, preserve:
 
 - normalized quota model,
 - 30-second auto refresh,
 - toolbar refresh fallback,
+- menu-bar refresh fallback,
 - native usage bars,
+- compact menu-bar summary rows,
 - static updated timestamp,
 - credential isolation outside SwiftUI,
 - injected clients for tests,

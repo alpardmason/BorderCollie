@@ -14,6 +14,15 @@ enum CursorUsageLimitKind: String, CaseIterable, Identifiable, Sendable {
             "API"
         }
     }
+
+    var compactTitle: String {
+        switch self {
+        case .autoComposer:
+            "Auto"
+        case .api:
+            "API"
+        }
+    }
 }
 
 enum CursorUsageLimitDisplay {
@@ -26,5 +35,14 @@ enum CursorUsageLimitDisplay {
                 resetStyle: .date
             )
         }
+    }
+
+    static func compactSummary(from quota: SubscriptionQuota) -> String {
+        CursorUsageLimitKind.allCases
+            .map { kind in
+                let tier = quota.tiers.first { $0.name == kind.rawValue }
+                return "\(kind.compactTitle): \(CompactUsageDisplay.percentageText(for: tier))"
+            }
+            .joined(separator: " | ")
     }
 }
